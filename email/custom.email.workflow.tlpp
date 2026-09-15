@@ -1,0 +1,258 @@
+
+#Include "tlpp-core.th"
+
+
+
+Namespace custom.email
+
+
+
+/*/{Protheus.doc} WorkflowService
+Classe que realiza o envio de workflow por e-mail 
+@type class
+@author Fernanda Pestana
+@since 14/09/2026
+/*/
+Class WorkflowService
+
+    private Data oProcess
+
+	public Data cSubject
+    public Data cTo
+    public Data cCC
+    public Data cCO
+    public Data cReturnFunction
+    public Data cTimeoutFunction
+    public Data cDirectory
+    
+    private Data cTemplateMail
+    private Data cTemplateForm
+    private Data aFormVar
+    private Data aMailVar
+    private Data cLastError
+    private Data lDictionary
+    private Data lEnvironment
+    private Data cHostWF
+
+
+    public Method New()
+    public Method Form(_cTemplateForm, _aFormVar)
+    public Method Mail(_cTemplateMail, _aMailVar)
+    public Method Send()
+    public Method GetLastError()
+
+EndClass
+
+
+
+/*/{Protheus.doc} WorkflowService::New
+Método que cria o objeto da Classe WorkflowService
+@type method
+@author Fernanda Pestana
+@since 14/09/2026
+@param _cSubject, Character, Assunto
+@param _cTo, Character, Destinatário
+/*/
+Method New(_cSubject as Character, _cTo as Character) Class WorkflowService
+
+    Local lReturn := .T.
+    
+    Default _cSubject := "Protheus - Workflow" 
+    Default _cTo := "" 
+
+
+
+    ::oProcess 	:= Nil
+	::cReturnFunction := "custom.email.u_wfRetorno()"
+    ::cTimeOutFunction := "custom.email.u_wfTimeout()"
+
+    ::cSubject := _cSubject // Assunto
+    ::cTo := _cTo // Destinatário
+    ::cCC := ""   // Copia
+    ::cCO := ""   // Copia Oculta
+    ::cLastError := ""
+    ::cDirectory := "HTML"
+    
+    ::cTemplateMail := "\workflow\__wflink.html" // Template do e-mail
+    ::cTemplateForm := "\workflow\__wfform.html" // Template do formulário
+    ::aFormVar := {} // Variáveis do formulário
+    ::aMailVar := {} // Variáveis do e-mail
+
+    ::lDictionary := iif(Select("SX6") > 0, .T., .F.)
+    ::lEnvironment := iif(!::lDictionary, RpcSetEnv("99","01","Admin", "Protheus.1537"), .T.)
+
+    if ::lEnvironment
+        ::cHostWF := superGetMV("MV_WFBRWSR", .F., "")
+    endIf
+
+Return iif(lReturn, self, Nil)
+
+
+
+/*/{Protheus.doc} WorkflowService::Form
+Seta um template para o Formulário do Workflow
+@type method
+@author Fernanda Pestana
+@since 14/09/2026
+@param _cTemplateForm, Character, Caminho do template
+@param _aFormVar, Array, PArâmetros a serem substituídos no template
+/*/
+Method Form(_cTemplateForm as Character, _aFormVar as Array) Class WorkflowService
+
+    Local lReturn := .F.
+
+
+
+    if !empty(_cTemplateForm) .and. File(_cTemplateForm)
+        ::cTemplateForm := _cTemplateForm // Template do e-mail
+        ::aFormVar := _aFormVar
+        lReturn := .T.
+    else
+        ::cLastError := "Arquivo do formulário nao encontrado: " + _cTemplateForm
+        lReturn := .F.
+    endIf
+
+Return lReturn
+
+
+
+/*/{Protheus.doc} WorkflowService::Mail
+Seta um template para o e-mail do workflow
+@type method
+@author Fernanda Pestana
+@since 14/09/2026
+@param _cTemplateMail, character, Caminho do template
+@param _aMailVar, array, PArâmetros a serem substituídos no template
+/*/
+Method Mail(_cTemplateMail as Character, _aMailVar as Array) Class WorkflowService
+
+    Local lReturn := .F.
+
+
+
+    if !empty(_cTemplateMail) .and. File(_cTemplateMail)
+        ::cTemplateMail := _cTemplateMail // Template do e-mail
+        ::aMailVar := _aMailVar
+        lReturn := .T.
+    else
+        ::cLastError := "Arquivo do formulário nao encontrado: " + _cTemplateMail
+        lReturn := .F.
+    endIf
+
+Return lReturn
+
+
+/*/{Protheus.doc} WorkflowService::Send
+Realiza o envio do e-mail de workflow
+@type method
+@author Fernanda Pestana
+@since 14/09/2026
+/*/
+Method Send() Class WorkflowService
+
+    Local oProcess := Nil as Object
+    Local cWorkflowID := "" as Character
+    Local i := 0 as Numeric
+
+
+
+    oProcess := TWFProcess():New("000001", ::cSubject) // Instanciamos a classe TWFProcess informando o código e nome do processo.  
+    oProcess:cPriority := "3"
+    
+    oProcess:NewTask("FORMULARIO", ::cTemplateForm)  // Cria a tarefa principal que será respondida pelo usuário.  
+    
+    // Atribuímos valor a um dos campos do formulário.  
+    for i := 1 to Len(::aFormVar)
+        oProcess:oHtml:ValByName(::aFormVar[i][1], ::aFormVar[i][2])
+    next
+                            
+    oProcess:cTo := upper(::cDirectory) //Informa o diretório será gerado o formulário.    
+    oProcess:bTimeOut := {{::cTimeOutFunction, 0, 0, 5 }} // Informa qual função será executada no evento de timeout.  
+    oProcess:bReturn  := ::cReturnFunction               // Informa qual função será executada no evento de retorno.    
+
+    cWorkflowID := oProcess:Start()
+
+    oProcess:NewTask("LINK", ::cTemplateMail)  // Cria o link para o arquivo que foi gerado na tarefa anterior.  
+			
+    aAdd(::aMailVar, {"A_LINK", ::cHostWF + "/messenger/emp" + cEmpAnt + "/" + ::cDirectory + "/" + cWorkflowID + ".htm"})
+
+    for i := 1 to Len(::aMailVar) // Atribuímos valor aos campos do email
+        oProcess:oHtml:ValByName(::aMailVar[i][1], ::aMailVar[i][2])
+    next
+        
+    oProcess:cTo := ::cTo 
+    oProcess:cCc := ::cCc   
+    oProcess:cSubject := ::cSubject  // Assunto do e-mail
+
+    // Iniciamos a tarefa e enviamos o email ao destinatário.
+    oProcess:Start()   
+
+    Conout("--------------------------------------------------------------")
+    Conout("E-mail de workflow enviado com sucesso!")
+    Conout("--------------------------------------------------------------")
+
+Return
+
+/*/{Protheus.doc} WorkflowService::GetLastError
+Retorna o último erro acontecido no processamento
+@type method
+@author Fernanda Pestana
+@since 14/09/2026
+/*/
+Method GetLastError() Class WorkflowService
+Return ::cLastError
+
+
+
+/*/{Protheus.doc} wfRetorno
+    Função padrão que será executada no retorno do processo. 
+@type UserFunction
+@version 1.0
+@author Fernanda Pestana
+@since 15/08/2026
+@param TWFProcess poProcess, Processo de workflow que foi retornado.
+/*/       
+User Function wfRetorno( oProcess )  
+
+	Local cProcesso := ""   as Character
+	Local cTarefa	:= ""   as Character
+	Local cMailID	:= "" as Character
+
+
+
+	Conout("--------------------------------------------------------------")
+	Conout("Executando funcao custom.sigactb.titan16.workflow.U_wfRetorno...")
+
+	cProcesso := oProcess:FProcessID                   // Recupera o ID do processo através do atributo do processo.
+	cTarefa   := oProcess:FTaskID                      // Recupera o ID da tarefa através do atributo do processo.
+	cMailID   := oProcess:oHtml:RetByName("WFMAILID")  // Recupera o identificador do email utilizando o método RetByName.
+  
+	Conout('Processo: ' + oProcess:FProcessID)  
+	Conout('Tarefa: '   + oProcess:FTaskID)  
+	Conout('Id: '       + oProcess:oHtml:RetByName("WFMAILID"))  
+	Conout('Retorno do processo executado com sucesso!')
+	Conout("--------------------------------------------------------------")
+
+Return Nil    
+
+
+
+/*/{Protheus.doc} wfTimeout
+    Função executada no timeout do processo. 
+	Exibe mensagem com dados do processamento no console.
+@type UserFunction
+@version 1.0
+@author Fernanda Pestana
+@since 15/08/2026
+@param TWFProcess poProcess, Processo de workflow que foi timeout.
+/*/
+User Function wfTimeout( oProcess )  
+
+	Conout("--------------------------------------------------------------")
+	Conout("Executando funcao custom.sigactb.titan16.workflow.U_wfTimeout...")
+	Conout('Processo: ' + oProcess:FProcessID)  
+	Conout('Tarefa: '   + oProcess:FTaskID)  
+	Conout('Id: '       + oProcess:oHtml:RetByName("WFMAILID"))  
+	Conout("--------------------------------------------------------------")
+	
+Return Nil  

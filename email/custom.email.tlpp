@@ -1,0 +1,293 @@
+
+#Include "tlpp-core.th"
+
+
+
+Namespace custom.email
+
+
+
+/*/{Protheus.doc} EmailService
+    Classe que realiza o envio de um e-mail
+@type class
+@author Fernanda Pestana
+@since 14/09/2026
+/*/
+Class EmailService
+
+    private Data oMsgMail
+    private Data oServer
+    private Data lDicionario
+	private Data lEnvironment
+    private Data cFromUser
+    private Data cFromPass
+    private Data nTimeOut
+    private Data cLastError
+    private Data cServer
+    private Data nPort
+
+    public Data cTo
+    public Data cSubject
+    public Data cBody
+    public Data aAttach
+
+
+    public Method New()
+    public Method Attach(aAttach)
+    public Method HtmlFile(_cTemplate, _aParameters)
+    public Method Send()
+    public Method GetLastError()
+
+EndClass
+
+
+
+/*/{Protheus.doc} EmailService::New
+    Cria o objeto da classe EmailService
+@type method
+@author Fernanda Pestana
+@since 14/09/2026
+@param _cTo, character, Destinatário
+@param _cSubject, character, Assunto
+@param _cBody, character, Corpo do E-mail
+@return Object, self
+/*/
+Method New(_cTo as Character, _cSubject as Character, _cBody as Character) Class EmailService
+
+    Local cRelServ as Character
+	Local n2P    
+
+    Default _cTo := ""
+    Default _cSubject := "Protheus - Email"
+    Default _cBody := ""
+
+
+
+    if !empty(_cTo)
+        ::cTo := _cTo // Destinatário
+    endIf
+    if !empty(_cSubject)
+        ::cSubject := _cSubject // Assunto
+    endIf
+    if !empty(_cBody)
+        ::cBody := _cBody // Corpo
+    endIf
+
+	::aAttach  :=  {}        // Anexos
+    ::cLastError := ""
+
+    ::lDicionario := iif(Select("SX6") > 0, .T., .F.)
+    ::lEnvironment := iif(!::lDicionario, RpcSetEnv("99","01","Admin", "Protheus.1537"), .T.)
+
+    if ::lEnvironment
+        ::cFromUser :=  Alltrim(superGetMV("MV_RELACNT"))
+        ::cFromPass :=  Alltrim(GetMV("MV_RELPSW"))   //Senha do Remetente
+        ::nTimeOut  :=  GetMV("MV_RELTIME")
+        cRelServ    :=  Alltrim(GetMV("MV_RELSERV"))
+        n2P         :=  At(':', cRelServ)
+        ::cServer   :=  SubStr(cRelServ, 1, n2P-1)
+        ::nPort     :=  Val(SubStr(cRelServ, n2P+1))
+    endIf
+
+Return Self
+
+
+
+/*/{Protheus.doc} EmailService::Attach
+    Anexar arquivos
+@type method
+@author Fernanda Pestana
+@since 14/09/2026
+@param _aAttach, Array, param_description
+@return lReturn, Sucesso ou Não
+/*/
+Method Attach(_aAttach as Array) Class EmailService //Anexar arquivos
+
+    Local lReturn := .T. as Logical
+    Local nI := 0 as Integer
+    
+
+    For nI := 1 To Len(_aAttach)
+        if File(_aAttach[nI])
+            aAdd(::aAttach, _aAttach[nI]) //arquivo encontrado
+        else
+            lReturn := .F.
+        EndIf
+    Next
+
+Return lReturn
+
+
+
+/*/{Protheus.doc} EmailService::HtmlFile
+Adiciona template html ao e-mail
+@type method
+@author Fernanda Pestana
+@since 14/09/2026
+@param _cTemplate, Character, Caminho do template
+@param _aParameters, Array, PArâmetros a serem substituídos no template
+/*/
+Method HtmlFile(_cTemplate as Character, _aParameters as Array) Class EmailService
+
+    Local oFile as Object
+    Local cConteudo := "" as Character
+    Local nI := 0 as Integer
+ 
+
+
+    //Se o arquivo existir
+    If File(_cTemplate)
+ 
+        //Tenta abrir o arquivo e pegar o conteudo
+        oFile := FwFileReader():New(_cTemplate)
+        If oFile:Open()
+            //Se deu certo abrir o arquivo, pega o conteudo e exibe
+            cConteudo  := oFile:FullRead()
+        EndIf
+        oFile:Close()
+
+        For nI := 1 To Len(_aParameters)
+            cConteudo := strTran(cConteudo, _aParameters[nI][1], _aParameters[nI][2])
+        Next
+
+        ::cBody := cConteudo
+
+    EndIf
+
+Return
+
+
+
+/*/{Protheus.doc} EmailService::Send
+    Envia o e-mail
+@type method
+@author Fernanda Pestana
+@since 14/09/2026
+@return lOk, Logical
+/*/
+Method Send() Class EmailService
+
+    Local lOk := .F. as Logical
+    Local nCount := 0 as Integer
+
+
+    Default aAttach := {}
+
+
+
+    ::cLastError := ""
+
+    Begin Sequence
+
+        if !::lEnvironment
+            ConOut("[EmailService] Erro na definicao do ambiente Protheus!")
+
+        elseIf !(lOk := Iif(Empty(self:cTo) , .F., .T.))
+            ConOut("[EmailService] Erro! Campo Destinatário vazio!")
+
+        else
+            oMsgMail := TMailMessage():New()
+            oMsgMail:Clear()
+
+            oMsgMail:cFrom    := ::cFromUser
+            oMsgMail:cTo      := ::cTo
+            oMsgMail:cSubject := ::cSubject
+            oMsgMail:cBody    := ::cBody
+
+            for nCount := 1 To Len(aAttach)
+                if File(aAttach[nCount])
+                    if oMsgMail:AttachFile(aAttach[nCount]) < 0
+                        ConOut('[EmailService] Erro! Nao foi possivel anexar arquivo ' + aAttach[nCount])
+                    endIf
+                else
+                    ConOut('[EmailService] Erro! Arquivo ' + aAttach[nCount] + ' nao encontrado!')
+                endIf
+            next
+
+            oServer := tMailManager():New()
+            oServer:SetUseTLS(.T.)
+
+            nRet := oServer:Init('', ::cServer, ::cFromUser, ::cFromPass, 0, ::nPort)
+
+            if nRet != 0 //se ocorrer erro ao iniciar o servidor
+                ConOut("[EmailService] Erro ao iniciar o servidor SMTP: "+ oServer:GetErrorString(nRet))
+                ::cLastError := oServer:GetErrorString(nRet)
+                lOk := .F.
+
+            else
+                ConOut("[EmailService] Servidor SMTP iniciado com sucesso!")
+
+                if oServer:SetSMTPTimeout(::nTimeOut) != 0  //se ocorrer erro ao definir timeout
+                    ConOut('[EmailService] Erro! Nao foi possivel definir o TimeOut '+cValToChar(::nTimeOut))
+                    lOk := .F.
+
+                else
+                    ConOut('[EmailService] TimeOut definido!')
+                    nRet := oServer:SMTPConnect()
+
+                    if nRet <> 0 //se ocorrer erro ao conectar ao smtp
+                        ConOut('[EmailService] Erro! Nao foi possivel conectar no servidor SMTP: ' + oServer:GetErrorString(nRet))
+                        ::cLastError := oServer:GetErrorString(nRet)
+                        lOk := .F.
+                    else
+                        ConOut('[EmailService] Servidor SMTP conectado!')
+                        nRet := oServer:SmtpAuth(::cFromUser, ::cFromPass)
+
+                        if nRet <> 0 //se ocorrer erro ao autenticar no smtp
+                            ConOut('[EmailService] Erro na autenticacao do servidor SMTP: ' + oServer:GetErrorString(nRet))
+                            ::cLastError := oServer:GetErrorString(nRet)
+                            lOk := .F.
+                        else
+                            ConOut('[EmailService] Servidor SMTP autenticado com sucesso!')
+                            lOk := .T.
+                        endIf
+
+                    endIf
+
+                endIf
+            endif
+
+            if lOk //se nao houver nenhum erro
+                nRet := oMsgMail:Send(oServer) //Envia a mensagem
+                if nRet <> 0
+                    Conout('[EmailService] Erro ao enviar mensagem: ' + oServer:GetErrorString(nRet))
+                    ::cLastError := oServer:GetErrorString(nRet)
+                    lOk := .F.
+                else
+                    Conout('[EmailService] Email enviado com sucesso!')
+                    lOk := .T.
+                endIf
+            endIf
+
+            nRet := oServer:SMTPDisconnect()
+
+            if nRet <> 0
+                Conout('[EmailService] Erro! Nao foi possivel disconectar do servidor SMTP: ' + oServer:GetErrorString(nRet))
+                ::cLastError := oServer:GetErrorString(nRet)
+                lOk := .F.
+            endIf
+        
+        endIf
+
+        if(!::lDicionario)
+            RpcClearEnv()
+        endif
+
+        ConOut("[EmailService] Fim da Execucao")
+
+    End Sequence
+
+Return lOk
+
+
+
+/*/{Protheus.doc} EmailService::GetLastError
+Retorna o último erro acontecido no processamento
+@type method
+@author Fernanda Pestana
+@since 14/09/2026
+@return variant, return_description
+/*/
+Method GetLastError() Class EmailService
+
+Return ::cLastError
